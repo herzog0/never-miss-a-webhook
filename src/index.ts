@@ -58,7 +58,7 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
      * then the Api Gateway acts as a simple proxy, and we don't need
      * a lambda to manage the payload before the posting action.
      * */
-    private sqsProxyApi: awsx.apigateway.API | null = null
+    public sqsProxyApi: awsx.apigateway.API | null = null
 
     /**
      * The lambda function responsible for taking the request body incoming from api gateway
@@ -120,7 +120,7 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
     public withDirectSqsIntegration(path: string) {
         this.directDelivery = true
 
-        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, this.queueArgs)
+        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`)
 
         const lambdaSQSPolicy = new aws.iam.Policy("sqs-send-message-policy", {
             description: "IAM policy for lambda to interact with SQS",
@@ -209,4 +209,10 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
 
 }
 
+const bla = NeverMissAWebhook.builder()
+    .withDeliveryEndpoint("asdas")
+    .withGlobalPrefix("TESTS")
+    .withDirectSqsIntegration("/posting")
+
+export const apiUrl = bla.sqsProxyApi!.url
 
