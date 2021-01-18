@@ -1,3 +1,4 @@
 config:
+  aws:accountId: "686854974865"
   aws:profile: default
   aws:region: us-east-1

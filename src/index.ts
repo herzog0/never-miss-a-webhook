@@ -10,6 +10,9 @@ import {bucket} from "./buckets";
 import {lambdaS3Policy} from "./policies";
 import {QueueEvent} from "@pulumi/aws/sqs";
 
+const globals = {
+    apiURL: "",
+}
 
 interface NeverMissAWebhookInterface {
     withDeliveryEndpoint(url: string): NeverMissAWebhook
@@ -63,7 +66,7 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
      * then the Api Gateway acts as a simple proxy, and we don't need
      * a lambda to manage the payload before the posting action.
      * */
-    private sqsProxyApi: awsx.apigateway.API | null = null
+    public sqsProxyApi: awsx.apigateway.API | null = null
 
     /**
      * The lambda function responsible for taking the request body incoming from api gateway
@@ -103,11 +106,10 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
     private constructor() {
     }
 
-    public static async builder() {
+    public static builder() {
         const instance = new NeverMissAWebhook()
         instance.region = instance.config.require("aws:region")
-        const identity = await aws.getCallerIdentity()
-        instance.accountId = identity.accountId
+        instance.accountId = instance.config.require("aws:accountId")
 
         return instance
     }
@@ -242,6 +244,12 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
             ]
         })
     }
-
-
 }
+
+const bla = NeverMissAWebhook.builder()
+    .withDeliveryEndpoint("https://webhook.site/1544609f-de1d-4540-8631-06a1f10bcd83")
+    .withGlobalPrefix("NEW-TESTS")
+    .withDirectSqsIntegration("poster")
+
+export const apiURL = bla.sqsProxyApi?.url
+
