@@ -19,3 +19,10 @@ export const saveInBucketAsJson = async (payload: string) => {
         })
     })
 }
+
+
+export const postMessageToSQS = async (payload: string) => {
+    const AWS = require('aws-sdk')
+    const sqs = new AWS.SQS()
+
+}

@@ -1,15 +1,24 @@
 import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
+import * as pulumi from "@pulumi/pulumi";
 import {STACK} from "./pulumiStack";
 import {Request, Response} from "@pulumi/awsx/apigateway/api";
 import {lambda} from "./pulumiLambdas";
+import {lambdaRole} from "./roles";
+import {payloadSaver} from "./lambdas";
+import {bucket} from "./buckets";
+import {lambdaS3Policy} from "./policies";
 
 
 interface NeverMissAWebhookInterface {
     withDeliveryEndpoint(url: string): NeverMissAWebhook
+
     withGlobalPrefix(globalPrefix: string): NeverMissAWebhook
-    withOptionalSQSConfiguration(args: aws.sqs.QueueArgs): NeverMissAWebhook
+
+    withSQSConfigurationOverride(args: aws.sqs.QueueArgs): NeverMissAWebhook
+
     withDirectSqsIntegration(path: string): NeverMissAWebhook
+
     withPayloadContentSaverIntermediate(): NeverMissAWebhook
 }
 
@@ -86,7 +95,8 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
      * */
     private sqsEventHandlerDeliveryFromSavedPayload: aws.sqs.QueueEventHandler | null = null
 
-    private constructor() {}
+    private constructor() {
+    }
 
     public static builder() {
         return new NeverMissAWebhook()
@@ -102,7 +112,7 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
         return this
     }
 
-    public withOptionalSQSConfiguration(args: aws.sqs.QueueArgs) {
+    public withSQSConfigurationOverride(args: aws.sqs.QueueArgs) {
         this.queueArgs = args
         return this;
     }
@@ -112,14 +122,62 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
 
         this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, this.queueArgs)
 
+        const lambdaSQSPolicy = new aws.iam.Policy("sqs-send-message-policy", {
+            description: "IAM policy for lambda to interact with SQS",
+            path: "/",
+            policy: `{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes"
+            ],
+            "Resource": "*"
+        }
+    ]
+}`
+        })
 
+        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment`, {
+            policyArn: lambdaSQSPolicy.arn,
+            role: lambdaRole.name
+        })
+
+        const sqsURL = pulumi.output(aws.sqs.getQueue({
+            name: `${this.globalPrefix}-queue-${STACK}`
+        }))
+
+        this.sqsProxyApiLambdaPayloadRedirector = new aws.lambda.CallbackFunction(`${this.globalPrefix}-lambda-payload-redirector-${STACK}`, {
+            name: `${this.globalPrefix}-lambda-payload-redirector-${STACK}`,
+            runtime: "nodejs12.x",
+            role: lambdaRole,
+            callback: async (event: Request) => {
+                const AWS = require('aws-sdk')
+                const sqs = new AWS.SQS()
+                const payloadBuffer = Buffer.from(event.body!, 'base64')
+                const payload = payloadBuffer.toString('ascii')
+
+                sqs.sendMessage({
+                    MessageBody: payload,
+                    QueueUrl: process.env.QUEUE_URL
+                })
+            },
+            environment: {
+                variables: {
+                    QUEUE_URL: sqsURL.url
+                }
+            },
+        })
 
         this.sqsProxyApi = new awsx.apigateway.API(`${this.globalPrefix}-sqs-proxy-api-${STACK}`, {
             routes: [
                 {
-                    path: "/",
+                    path: path,
                     method: "POST",
-                    eventHandler: lambda
+                    eventHandler: this.sqsProxyApiLambdaPayloadRedirector
                 }
             ]
         })
@@ -149,7 +207,6 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
     }
 
 
-
-
 }
+
 

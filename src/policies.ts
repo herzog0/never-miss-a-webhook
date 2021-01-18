@@ -18,4 +18,6 @@ const lambdaS3Policy = new aws.iam.Policy(`post-to-s3-policy`, {
   ]}`)
 })
 
+
+
 export {lambdaS3Policy}
