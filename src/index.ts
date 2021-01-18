@@ -8,6 +8,7 @@ import {lambdaRole} from "./roles";
 import {payloadSaver} from "./lambdas";
 import {bucket} from "./buckets";
 import {lambdaS3Policy} from "./policies";
+import {QueueEvent} from "@pulumi/aws/sqs";
 
 
 interface NeverMissAWebhookInterface {
@@ -24,6 +25,10 @@ interface NeverMissAWebhookInterface {
 
 // BucketNotification
 export class NeverMissAWebhook implements NeverMissAWebhookInterface {
+
+    private config = new pulumi.Config()
+    private region: string = ""
+    private accountId: string = ""
 
     /**
      * The endpoint to post to
@@ -98,8 +103,13 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
     private constructor() {
     }
 
-    public static builder() {
-        return new NeverMissAWebhook()
+    public static async builder() {
+        const instance = new NeverMissAWebhook()
+        instance.region = instance.config.require("aws:region")
+        const identity = await aws.getCallerIdentity()
+        instance.accountId = identity.accountId
+
+        return instance
     }
 
     public withDeliveryEndpoint(url: string) {
@@ -120,7 +130,19 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
     public withDirectSqsIntegration(path: string) {
         this.directDelivery = true
 
-        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, this.queueArgs)
+        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`)
+
+        this.sqsDeliveryQueue.onEvent(`${this.globalPrefix}-simple-delivery-lambda-${STACK}`,
+            async (event: QueueEvent) => {
+                const axios = require("axios")
+                const body = JSON.parse(event.Records[0].body)
+                await axios.post(this.deliveryEndpoint, body, {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+            }
+        )
 
         const lambdaSQSPolicy = new aws.iam.Policy("sqs-send-message-policy", {
             description: "IAM policy for lambda to interact with SQS",
@@ -131,11 +153,15 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
         {
             "Effect": "Allow",
             "Action": [
-                "sqs:ReceiveMessage",
-                "sqs:DeleteMessage",
-                "sqs:GetQueueAttributes"
+                "sqs:*",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
             ],
-            "Resource": "*"
+            "Resource": [
+            "arn:aws:sqs:us-east-1:*:*",
+            "arn:aws:logs:*:*:*"
+            ]
         }
     ]
 }`
@@ -146,28 +172,40 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
             role: lambdaRole.name
         })
 
-        const sqsURL = pulumi.output(aws.sqs.getQueue({
-            name: `${this.globalPrefix}-queue-${STACK}`
-        }))
+        const sqsURL = this.sqsDeliveryQueue.name.apply(name => `https://sqs.${this.region}.amazonaws.com/${this.accountId}/${name}`)
 
         this.sqsProxyApiLambdaPayloadRedirector = new aws.lambda.CallbackFunction(`${this.globalPrefix}-lambda-payload-redirector-${STACK}`, {
             name: `${this.globalPrefix}-lambda-payload-redirector-${STACK}`,
             runtime: "nodejs12.x",
             role: lambdaRole,
-            callback: async (event: Request) => {
+            callback: async (event: any) => {
                 const AWS = require('aws-sdk')
                 const sqs = new AWS.SQS()
+
                 const payloadBuffer = Buffer.from(event.body!, 'base64')
                 const payload = payloadBuffer.toString('ascii')
+                console.log(payload)
 
-                sqs.sendMessage({
-                    MessageBody: payload,
-                    QueueUrl: process.env.QUEUE_URL
+                await new Promise((resolve, reject) => {
+                    sqs.sendMessage({
+                        MessageBody: payload,
+                        QueueUrl: process.env.QUEUE_URL
+                    }, function (err: any, data: any) {
+                        if (err) {
+                            reject(err)
+                        } else {
+                            resolve(data)
+                        }
+                    })
                 })
+                return {
+                    statusCode: 200,
+                    body: "delivered"
+                }
             },
             environment: {
                 variables: {
-                    QUEUE_URL: sqsURL.url
+                    QUEUE_URL: sqsURL
                 }
             },
         })
@@ -181,7 +219,6 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
                 }
             ]
         })
-
         return this
     }
 
@@ -208,5 +245,3 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
 
 
 }
-
-
