@@ -14,6 +14,7 @@ const lambdaRole = new aws.iam.Role(`role-payloads-api`, {
   ]
 }
 `,
-})
+},
+    )
 
 export {lambdaRole}
