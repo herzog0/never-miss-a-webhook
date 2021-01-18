@@ -2,19 +2,7 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="6737600e-f143-4fea-87cc-0cb3e30848d9" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Pulumi.dev.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/Pulumi.dev.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/index.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/apiGateway.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aws.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/buckets.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/index.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lambdas.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/policies.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/policyAttachments.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/pulumiLambdas.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/pulumiStack.ts" beforeDir="false" afterPath="$PROJECT_DIR$/pulumiStack.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/roles.ts" beforeDir="false" afterPath="$PROJECT_DIR$/roles.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

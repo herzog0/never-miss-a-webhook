@@ -156,15 +156,13 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
                 const AWS = require('aws-sdk')
                 const sqs = new AWS.SQS()
 
-                console.log("ok until here")
-                console.log(process.env.QUEUE_URL)
-                // const payloadBuffer = Buffer.from(event.body!, 'base64')
-                // const payload = payloadBuffer.toString('ascii')
-                // console.log(payload)
+                const payloadBuffer = Buffer.from(event.body!, 'base64')
+                const payload = payloadBuffer.toString('ascii')
+                console.log(payload)
 
                 await new Promise((resolve, reject) => {
                     sqs.sendMessage({
-                        MessageBody: "eegesd",
+                        MessageBody: payload,
                         QueueUrl: process.env.QUEUE_URL
                     }, function (err: any, data: any) {
                         if (err) {
