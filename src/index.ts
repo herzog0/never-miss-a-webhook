@@ -29,7 +29,7 @@ interface NeverMissAWebhookInterface {
 // BucketNotification
 export class NeverMissAWebhook implements NeverMissAWebhookInterface {
 
-    private config = new pulumi.Config()
+    private config = new pulumi.Config("aws")
     private region: string = ""
     private accountId: string = ""
 
@@ -108,8 +108,8 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
 
     public static builder() {
         const instance = new NeverMissAWebhook()
-        instance.region = instance.config.require("aws:region")
-        instance.accountId = instance.config.require("aws:accountId")
+        instance.region = instance.config.require("region")
+        instance.accountId = instance.config.require("accountId")
 
         return instance
     }
@@ -132,19 +132,9 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
     public withDirectSqsIntegration(path: string) {
         this.directDelivery = true
 
-        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`)
-
-        this.sqsDeliveryQueue.onEvent(`${this.globalPrefix}-simple-delivery-lambda-${STACK}`,
-            async (event: QueueEvent) => {
-                const axios = require("axios")
-                const body = JSON.parse(event.Records[0].body)
-                await axios.post(this.deliveryEndpoint, body, {
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-            }
-        )
+        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, {
+            visibilityTimeoutSeconds: 180
+        })
 
         const lambdaSQSPolicy = new aws.iam.Policy("sqs-send-message-policy", {
             description: "IAM policy for lambda to interact with SQS",
@@ -173,6 +163,28 @@ export class NeverMissAWebhook implements NeverMissAWebhookInterface {
             policyArn: lambdaSQSPolicy.arn,
             role: lambdaRole.name
         })
+
+        this.sqsEventHandlerSimpleDeliveryAttempt = new aws.lambda.CallbackFunction(`${this.globalPrefix}-simple-delivery-callback-${STACK}`, {
+            name: `${this.globalPrefix}-simple-delivery-lambda-${STACK}`,
+            runtime: "nodejs12.x",
+            role: lambdaRole,
+            callback: async (event: QueueEvent) => {
+                const axios = require("axios")
+                const body = JSON.parse(event.Records[0].body)
+                await axios.post(process.env.DELIVERY_ENDPOINT, body, {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+            },
+            environment: {
+                variables: {
+                    DELIVERY_ENDPOINT: this.deliveryEndpoint!
+                }
+            }
+        })
+
+        this.sqsDeliveryQueue.onEvent(`${this.globalPrefix}-queue-subscription-${STACK}`, this.sqsEventHandlerSimpleDeliveryAttempt)
 
         const sqsURL = this.sqsDeliveryQueue.name.apply(name => `https://sqs.${this.region}.amazonaws.com/${this.accountId}/${name}`)
 
