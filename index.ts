@@ -378,6 +378,10 @@ export class NeverMissAWebhook {
                 const S3 = new AWS.S3()
                 const body = JSON.parse(event.Records[0].body)
 
+                if(body.hasOwnProperty("Event") && body.Event === "s3:TestEvent") {
+                    console.log("Ignoring automatic test event from aws ...")
+                    return
+                }
                 console.log(JSON.stringify(body, null, '  '))
 
                 const bucketEvent = body.Records[0]
