@@ -166,7 +166,7 @@ export class NeverMissAWebhook {
 }`
         })
 
-        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment`, {
+        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment-new-unique`, {
             policyArn: lambdaSQSPolicy.arn,
             role: lambdaRole.name
         })
@@ -246,13 +246,28 @@ export class NeverMissAWebhook {
     public withPayloadContentSaverIntermediate(path: string) {
         this.directDelivery = false
 
-        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, {
-            visibilityTimeoutSeconds: 180
-        })
-
         this.s3ProxyApiBucket = new aws.s3.Bucket("payloads-bucket", {
-            bucket: `api-meetup-bucket-${STACK}`
+            bucket: `kudlkjsdlkasldk`
         });
+
+        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, {
+            visibilityTimeoutSeconds: 180,
+            policy: pulumi.interpolate`{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:*:*:*",
+      "Condition": {
+        "ArnEquals": { "aws:SourceArn": "${this.s3ProxyApiBucket.arn}" }
+      }
+    }
+  ]
+}
+`
+        })
 
         // Policy for allowing Lambda to interact with S3
         const lambdaS3Policy = new aws.iam.Policy(`post-to-s3-policy`, {
@@ -270,7 +285,7 @@ export class NeverMissAWebhook {
         })
 
         // Attach the policies to the Lambda role
-        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment`, {
+        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment-newnenw`, {
             policyArn: lambdaS3Policy.arn,
             role: lambdaRole.name
         })
@@ -314,6 +329,90 @@ export class NeverMissAWebhook {
             },
         })
 
+
+        const lambdaS3ReadPolicy = new aws.iam.Policy("s3-read-message-policy", {
+            description: "IAM policy for lambda to interact with S3",
+            path: "/",
+            policy: pulumi.interpolate`{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:aws:logs:*:*:*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:*"
+            ],
+            "Resource": "${this.s3ProxyApiBucket.arn}/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "sqs:*"
+            ],
+            "Resource": "arn:aws:sqs:us-east-1:*:*"
+        }
+    ]
+}`
+        })
+
+        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment-uaysdkj`, {
+            policyArn: lambdaS3ReadPolicy.arn,
+            role: lambdaRole.name
+        })
+
+        this.sqsEventHandlerDeliveryFromSavedPayload = new aws.lambda.CallbackFunction(`${this.globalPrefix}-simple-delivery-callback-${STACK}`, {
+            name: `${this.globalPrefix}-simple-delivery-lambda-${STACK}`,
+            runtime: "nodejs12.x",
+            role: lambdaRole,
+            callback: async (event: any) => {
+                const axios = require("axios")
+                const AWS = require('aws-sdk')
+                const S3 = new AWS.S3()
+                const body = JSON.parse(event.Records[0].body)
+
+                console.log(JSON.stringify(body, null, '  '))
+
+                const bucketEvent = body.Records[0]
+
+                const key = bucketEvent.s3.object.key
+                const bucket = bucketEvent.s3.bucket.name
+
+                console.log("REACHED HERE")
+
+                const data = await S3.getObject({
+                        Bucket: bucket,
+                        Key: key,
+                    }).promise()
+
+                console.log("OBTAINED DATA")
+
+                const jsonStringData = data.Body.toString('utf-8')
+
+                console.log(jsonStringData)
+
+                await axios.post(process.env.DELIVERY_ENDPOINT, JSON.parse(jsonStringData), {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+            },
+            environment: {
+                variables: {
+                    DELIVERY_ENDPOINT: this.deliveryEndpoint!
+                }
+            }
+        })
+
+        this.sqsDeliveryQueue.onEvent(`delivery-queue-eventtt`, this.sqsEventHandlerDeliveryFromSavedPayload)
+
         // create API
         this.s3ProxyApi = new awsx.apigateway.API(`payloads-api-meetup-api-gateway`, {
             routes: [
@@ -326,13 +425,13 @@ export class NeverMissAWebhook {
         })
 
         new aws.s3.BucketNotification(`${this.globalPrefix}-bucket-notification-${STACK}`, {
-            bucket: this.s3ProxyApiBucket.bucket,
+            bucket: this.s3ProxyApiBucket.id,
             queues: [
                 {
                     events: ["s3:ObjectCreated:*"],
                     queueArn: this.sqsDeliveryQueue.arn
                 }
-            ]
+            ],
         })
 
         return this
@@ -342,8 +441,49 @@ export class NeverMissAWebhook {
 
 const bla = NeverMissAWebhook.builder()
     .withDeliveryEndpoint("https://webhook.site/1544609f-de1d-4540-8631-06a1f10bcd83")
-    .withGlobalPrefix("NEW-TESTS")
+    .withGlobalPrefix("NEW-TESTSasdsa")
     .withPayloadContentSaverIntermediate("poster")
 
 export const apiURL = bla.s3ProxyApi?.url
 
+
+/* BODY
+* {
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "awsRegion": "us-east-1",
+      "eventTime": "2021-01-19T04:10:59.831Z",
+      "eventName": "ObjectCreated:Put",
+      "userIdentity": {
+        "principalId": "AWS:AROAZ7257FWIWIBSFK2F3:payloads-api-meetup-lambda-dev"
+      },
+      "requestParameters": {
+        "sourceIPAddress": "3.85.245.122"
+      },
+      "responseElements": {
+        "x-amz-request-id": "07BEE13A50C5122C",
+        "x-amz-id-2": "rxAB5Bb85Tga4llWZV2pnE5+qZs2c+m9Q9VQFC1cljrYItorFa8IaYeBUoymYzgQRxpImqOKSxUqVC1RjYGiFozXXh6sE2EV"
+      },
+      "s3": {
+        "s3SchemaVersion": "1.0",
+        "configurationId": "tf-s3-queue-20210119040950244600000001",
+        "bucket": {
+          "name": "kudlkjsdlkasldk",
+          "ownerIdentity": {
+            "principalId": "A2L6U30J7N5YHJ"
+          },
+          "arn": "arn:aws:s3:::kudlkjsdlkasldk"
+        },
+        "object": {
+          "key": "1611029463907.json",
+          "size": 24,
+          "eTag": "83b9b93d346960c66aec567cd60faa57",
+          "sequencer": "0060065BD88D817FAE"
+        }
+      }
+    }
+  ]
+}
+* */
