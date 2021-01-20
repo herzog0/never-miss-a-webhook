@@ -4,7 +4,11 @@ import * as pulumi from "@pulumi/pulumi";
 import {Request, Response} from "@pulumi/awsx/apigateway/api";
 import {QueueEvent} from "@pulumi/aws/sqs";
 import {createPulumiCallback} from "./pulumi/callback";
-import {allowLambdaToReceiveDeleteGetSQSMessage, allowLambdaToSendSQSMessage} from "./pulumi/allowances";
+import {
+    allowBucketToSendSQSMessage, allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket, allowLambdaToPutObjectsInS3Bucket,
+    allowLambdaToReceiveDeleteGetSQSMessage,
+    allowLambdaToSendSQSMessage
+} from "./pulumi/allowances";
 
 const STACK = pulumi.getStack();
 
@@ -26,6 +30,7 @@ export class NeverMissAWebhook {
     private config = new pulumi.Config("aws")
     private region: string = ""
     private accountId: string = ""
+    private deletePayloadObj: boolean = false
 
     /**
      * The endpoint to post to
@@ -106,6 +111,7 @@ export class NeverMissAWebhook {
         instance.accountId = instance.config.require("accountId")
         instance.globalPrefix = instance.config.require("globalPrefix")
         instance.deliveryEndpoint = instance.config.require("deliveryEndpoint")
+        instance.deletePayloadObj = instance.config.getBoolean("deletePayloadObj") || false
 
         return instance
     }
@@ -213,195 +219,132 @@ export class NeverMissAWebhook {
     public withPayloadContentSaverIntermediate(path: string) {
         this.directDelivery = false
 
-        const lambdaRole = new aws.iam.Role(`role-payloads-api`, {
-            assumeRolePolicy: `{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Action": "sts:AssumeRole",
-      "Principal": {
-        "Service": "lambda.amazonaws.com"
-      },
-      "Effect": "Allow"
-    }
-  ]
-}
-`,
-        })
-
-        this.s3ProxyApiBucket = new aws.s3.Bucket("payloads-bucket", {
-            bucket: `kudlkjsdlkasldk`
+        // The bucket, configured with private ACL. Only the owner can access it.
+        this.s3ProxyApiBucket = new aws.s3.Bucket(`${this.globalPrefix}-payload-bucket-${STACK}`, {
+            bucket: `${this.globalPrefix}-payload-bucket-${STACK}`
         });
 
-        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, {
+        // The queue which takes the payloads
+        const queueName = `${this.globalPrefix}-queue-${STACK}`
+        this.sqsDeliveryQueue = new aws.sqs.Queue(queueName, {
+            ...this.queueArgs,
             visibilityTimeoutSeconds: 180,
-            policy: pulumi.interpolate`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:*:*:*",
-      "Condition": {
-        "ArnEquals": { "aws:SourceArn": "${this.s3ProxyApiBucket.arn}" }
-      }
-    }
-  ]
-}
-`
+            policy: allowBucketToSendSQSMessage(queueName, this.s3ProxyApiBucket.arn)
         })
 
-        // Policy for allowing Lambda to interact with S3
-        const lambdaS3Policy = new aws.iam.Policy(`post-to-s3-policy`, {
-            description: "IAM policy for Lambda to interact with S3",
-            path: "/",
-            policy: this.s3ProxyApiBucket.arn.apply(bucketArn => `{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Action": "s3:PutObject",
-      "Resource": "${bucketArn}/*",
-      "Effect": "Allow"
-    }
-  ]}`)
-        })
-
-        // Attach the policies to the Lambda role
-        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment-newnenw`, {
-            policyArn: lambdaS3Policy.arn,
-            role: lambdaRole.name
-        })
+        const roleLambdaPutS3 = allowLambdaToPutObjectsInS3Bucket(
+            `${this.globalPrefix}-lam-put-s3-allw-${STACK}`,
+            "Allows a lambda function to put objects in an S3 bucket",
+            this.s3ProxyApiBucket.arn
+        )
 
         const payloadSaver = async (event: any) => {
-            const AWS = require('aws-sdk')
-            const s3 = new AWS.S3()
-            const payloadBuffer = Buffer.from(event.body, 'base64')
-            const payload = payloadBuffer.toString('ascii')
-            const putParams = {
-                Bucket: process.env.S3_BUCKET, // We'll read the .env variable
-                Key: `${new Date().getTime()}.json`, // We'll use the timestamp
-                Body: payload
+            try {
+                const AWS = require('aws-sdk')
+                const s3 = new AWS.S3()
+                const payloadBuffer = Buffer.from(event.body, 'base64')
+                const payload = payloadBuffer.toString('ascii')
+                const putParams = {
+                    Bucket: process.env.S3_BUCKET, // We'll read the .env variable
+                    Key: `${new Date().getTime()}.json`, // We'll use the timestamp
+                    Body: payload
+                }
+
+                await new Promise((resolve, reject) => {
+                    s3.putObject(putParams, function (err: any, data: any) {
+                        if (err) {
+                            reject(err)
+                        } else {
+                            resolve(data)
+                        }
+                    })
+                })
+
+                return {
+                    statusCode: 200,
+                    body: "Success"
+                }
+            } catch (e) {
+                console.error(e)
+                return {
+                    statusCode: 500,
+                    body: e.message
+                }
             }
 
-            await new Promise((resolve, reject) => {
-                s3.putObject(putParams, function (err: any, data: any) {
-                    if (err) {
-                        reject(err)
-                    } else {
-                        resolve(data)
-                    }
-                })
+
+        }
+
+        this.s3ProxyApiLambdaPayloadSaver = createPulumiCallback(
+            `${this.globalPrefix}-pld-svr-cb-${STACK}`,
+            roleLambdaPutS3,
+            payloadSaver,
+            {
+                S3_BUCKET: this.s3ProxyApiBucket.id
+            }
+        )
+
+        const roleLambdaSQSS3Perms = allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket(
+            `${this.globalPrefix}-lam-rec-del-sqs-get-del-s3-${STACK}`,
+            "Allows a lambda to perform operations on an SQS queue and on an S3 bucket",
+            this.deletePayloadObj,
+            this.sqsDeliveryQueue.arn,
+            this.s3ProxyApiBucket.arn
+            )
+
+        const lambdaGetAndPostPayload = async (event: any) => {
+            const axios = require("axios")
+            const AWS = require('aws-sdk')
+            const body = JSON.parse(event.Records[0].body)
+            if (body.hasOwnProperty("Event") && body.Event === "s3:TestEvent") {
+                console.log("Ignoring automatic test event from aws ...")
+                return
+            }
+
+            const S3 = new AWS.S3()
+            const bucketEvent = body.Records[0]
+            const key = bucketEvent.s3.object.key
+            const bucket = bucketEvent.s3.bucket.name
+
+            const data = await S3.getObject({
+                Bucket: bucket,
+                Key: key,
+            }).promise()
+
+            const jsonStringData = data.Body.toString('utf-8')
+            await axios.post(process.env.DELIVERY_ENDPOINT, JSON.parse(jsonStringData), {
+                headers: {
+                    'Content-Type': 'application/json'
+                }
             })
 
-            return {
-                statusCode: 200,
-                body: "Success"
-            }
-        }
-
-        this.s3ProxyApiLambdaPayloadSaver = new aws.lambda.CallbackFunction(`payloads-api-meetup-lambda`, {
-            name: `payloads-api-meetup-lambda-${STACK}`,
-            runtime: "nodejs12.x",
-            role: lambdaRole,
-            callback: payloadSaver,
-            environment: {
-                variables: {
-                    S3_BUCKET: this.s3ProxyApiBucket.id
-                }
-            },
-        })
-
-
-        const lambdaS3ReadPolicy = new aws.iam.Policy("s3-read-message-policy", {
-            description: "IAM policy for lambda to interact with S3",
-            path: "/",
-            policy: pulumi.interpolate`{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-            ],
-            "Resource": "arn:aws:logs:*:*:*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:*"
-            ],
-            "Resource": "${this.s3ProxyApiBucket.arn}/*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "sqs:*"
-            ],
-            "Resource": "arn:aws:sqs:us-east-1:*:*"
-        }
-    ]
-}`
-        })
-
-        new aws.iam.RolePolicyAttachment(`post-to-s3-policy-attachment-uaysdkj`, {
-            policyArn: lambdaS3ReadPolicy.arn,
-            role: lambdaRole.name
-        })
-
-        this.sqsEventHandlerDeliveryFromSavedPayload = new aws.lambda.CallbackFunction(`${this.globalPrefix}-simple-delivery-callback-${STACK}`, {
-            name: `${this.globalPrefix}-simple-delivery-lambda-${STACK}`,
-            runtime: "nodejs12.x",
-            role: lambdaRole,
-            callback: async (event: any) => {
-                const axios = require("axios")
-                const AWS = require('aws-sdk')
-                const S3 = new AWS.S3()
-                const body = JSON.parse(event.Records[0].body)
-
-                if (body.hasOwnProperty("Event") && body.Event === "s3:TestEvent") {
-                    console.log("Ignoring automatic test event from aws ...")
-                    return
-                }
-                console.log(JSON.stringify(body, null, '  '))
-
-                const bucketEvent = body.Records[0]
-
-                const key = bucketEvent.s3.object.key
-                const bucket = bucketEvent.s3.bucket.name
-
-                console.log("REACHED HERE")
-
-                const data = await S3.getObject({
+            // If reached here, check if we have to delete the payload
+            const shouldDelete = process.env.DELETE_PAYLOAD_AFTER === "true"
+            if (shouldDelete) {
+                await S3.deleteObject({
                     Bucket: bucket,
-                    Key: key,
+                    Key: key
                 }).promise()
-
-                console.log("OBTAINED DATA")
-
-                const jsonStringData = data.Body.toString('utf-8')
-
-                console.log(jsonStringData)
-
-                await axios.post(process.env.DELIVERY_ENDPOINT, JSON.parse(jsonStringData), {
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-            },
-            environment: {
-                variables: {
-                    DELIVERY_ENDPOINT: this.deliveryEndpoint!
-                }
             }
-        })
+        }
 
-        this.sqsDeliveryQueue.onEvent(`delivery-queue-eventtt`, this.sqsEventHandlerDeliveryFromSavedPayload)
+        this.sqsEventHandlerDeliveryFromSavedPayload = createPulumiCallback(
+            `${this.globalPrefix}-deliver-from-s3-${STACK}`,
+            roleLambdaSQSS3Perms,
+            lambdaGetAndPostPayload,
+            {
+                DELIVERY_ENDPOINT: this.deliveryEndpoint,
+                DELETE_PAYLOAD_AFTER: String(this.deletePayloadObj)
+            }
+        )
+
+        this.sqsDeliveryQueue.onEvent(
+            `${this.globalPrefix}-queue-subscription-${STACK}`,
+            this.sqsEventHandlerDeliveryFromSavedPayload
+        )
 
         // create API
-        this.s3ProxyApi = new awsx.apigateway.API(`payloads-api-meetup-api-gateway`, {
+        this.s3ProxyApi = new awsx.apigateway.API(`${this.globalPrefix}-s3-proxy-api-${STACK}`, {
             routes: [
                 {
                     path: path,
