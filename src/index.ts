@@ -5,7 +5,9 @@ import {Request, Response} from "@pulumi/awsx/apigateway/api";
 import {QueueEvent} from "@pulumi/aws/sqs";
 import {createPulumiCallback} from "./pulumi/callback";
 import {
-    allowBucketToSendSQSMessage, allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket, allowLambdaToPutObjectsInS3Bucket,
+    allowBucketToSendSQSMessage,
+    allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket,
+    allowLambdaToPutObjectsInS3Bucket,
     allowLambdaToReceiveDeleteGetSQSMessage,
     allowLambdaToSendSQSMessage
 } from "./pulumi/allowances";
@@ -227,7 +229,6 @@ export class NeverMissAWebhook {
         // The queue which takes the payloads
         const queueName = `${this.globalPrefix}-queue-${STACK}`
         this.sqsDeliveryQueue = new aws.sqs.Queue(queueName, {
-            ...this.queueArgs,
             visibilityTimeoutSeconds: 180,
             policy: allowBucketToSendSQSMessage(queueName, this.s3ProxyApiBucket.arn)
         })

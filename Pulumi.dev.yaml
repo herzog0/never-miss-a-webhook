@@ -4,4 +4,4 @@ config:
   aws:region: us-east-1
   aws:globalPrefix: nmaw-1901
   aws:deliveryEndpoint: "https://webhook.site/1544609f-de1d-4540-8631-06a1f10bcd83"
-  aws:deletePayloadObj: true
+  aws:deletePayloadObj: false

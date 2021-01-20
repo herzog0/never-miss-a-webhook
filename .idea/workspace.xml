@@ -3,7 +3,6 @@
   <component name="ChangeListManager">
     <list default="true" id="6737600e-f143-4fea-87cc-0cb3e30848d9" name="Default Changelist" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Pulumi.dev.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/Pulumi.dev.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/index.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/index.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/pulumi/allowances.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/pulumi/allowances.ts" afterDir="false" />
@@ -55,7 +54,7 @@
       <workItem from="1610835169331" duration="10799000" />
       <workItem from="1610853551858" duration="5675000" />
       <workItem from="1610899808033" duration="7236000" />
-      <workItem from="1611098638717" duration="11758000" />
+      <workItem from="1611098638717" duration="13162000" />
     </task>
     <servers />
   </component>

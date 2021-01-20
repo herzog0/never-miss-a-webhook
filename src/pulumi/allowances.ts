@@ -25,7 +25,8 @@ export function allowLambdaToReceiveDeleteGetSQSMessage(name: string,
     }
   ]
 }
-`,})
+`,
+    })
 
     // Create policy with logging allowance
     const policy = new aws.iam.Policy(`${name}-plcy`, {
@@ -86,7 +87,8 @@ export function allowLambdaToSendSQSMessage(name: string,
     }
   ]
 }
-`,})
+`,
+    })
 
     // Create policy with logging allowance
     const policy = new aws.iam.Policy(`${name}-plcy`, {
@@ -136,7 +138,7 @@ export function allowBucketToSendSQSMessage(name: string,
       "Effect": "Allow",
       "Principal": "*",
       "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:${region}:${accountId}:${name}",
+      "Resource": "arn:aws:sqs:${region}:${accountId}:*",
       "Condition": {
         "ArnEquals": { "aws:SourceArn": "${bucketArn}" }
       }
@@ -170,7 +172,8 @@ export function allowLambdaToPutObjectsInS3Bucket(name: string,
     }
   ]
 }
-`,})
+`,
+    })
 
     // Create policy with logging allowance
     const policy = new aws.iam.Policy(`${name}-plcy`, {
@@ -182,15 +185,18 @@ export function allowLambdaToPutObjectsInS3Bucket(name: string,
         {
             "Effect": "Allow",
             "Action": [
-                "s3:PutObject",
                 "logs:CreateLogGroup",
                 "logs:CreateLogStream",
                 "logs:PutLogEvents"
             ],
-            "Resource": [
-            "${bucketArn}/*",
-            "arn:aws:logs:${region}:${accountId}:*"
-            ]
+            "Resource": "arn:aws:logs:${region}:${accountId}:*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:*"
+            ],
+            "Resource": "${bucketArn}/*"
         }
     ]
 }`
@@ -230,7 +236,8 @@ export function allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket(name: string,
     }
   ]
 }
-`,})
+`,
+    })
 
     // Create policy with logging allowance
     const policy = new aws.iam.Policy(`${name}-plcy`, {
@@ -266,7 +273,8 @@ export function allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket(name: string,
             "Resource": "${queueArn}"
         }
     ]
-}`})
+}`
+    })
 
     // Attach them!
     new aws.iam.RolePolicyAttachment(`${name}-role-plcy-attach`, {
