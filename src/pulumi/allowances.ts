@@ -2,9 +2,9 @@ import {Output} from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 
-export function allowLambdaToReceiveSQSMessage(name: string,
-                                               description: string,
-                                               queueArn: Output<string>): aws.iam.Role {
+export function allowLambdaToReceiveDeleteGetSQSMessage(name: string,
+                                                        description: string,
+                                                        queueArn: Output<string>): aws.iam.Role {
     const config = new pulumi.Config("aws")
     const region = config.require("region")
     const accountId = config.require("accountId")

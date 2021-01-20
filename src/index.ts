@@ -4,7 +4,7 @@ import * as pulumi from "@pulumi/pulumi";
 import {Request, Response} from "@pulumi/awsx/apigateway/api";
 import {QueueEvent} from "@pulumi/aws/sqs";
 import {createPulumiCallback} from "./pulumi/callback";
-import {allowLambdaToReceiveSQSMessage, allowLambdaToSendSQSMessage} from "./pulumi/allowances";
+import {allowLambdaToReceiveDeleteGetSQSMessage, allowLambdaToSendSQSMessage} from "./pulumi/allowances";
 
 const STACK = pulumi.getStack();
 
@@ -123,7 +123,7 @@ export class NeverMissAWebhook {
 
         // Role for allowing the lambda function to call "ReceiveMessage" (internally by aws)
         // on the queue
-        const lambdaReceiveMessageRole = allowLambdaToReceiveSQSMessage(
+        const lambdaReceiveMessageRole = allowLambdaToReceiveDeleteGetSQSMessage(
             `${this.globalPrefix}-lam-rec-msg-allw-${STACK}`,
             "Allows a lambda function to receive messages from an SQS queue.",
             this.sqsDeliveryQueue.arn
