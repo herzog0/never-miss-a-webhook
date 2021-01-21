@@ -2,13 +2,10 @@ import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
 import * as pulumi from "@pulumi/pulumi";
 import {Request, Response} from "@pulumi/awsx/apigateway/api";
-import {QueueEvent} from "@pulumi/aws/sqs";
 import {createPulumiCallback} from "./pulumi/callbacks";
 import {
     allowBucketToSendSQSMessage,
-    allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket,
     allowLambdaToPutObjectsInS3Bucket,
-    allowLambdaToReceiveDeleteGetSQSMessage,
     allowLambdaToSendSQSMessage
 } from "./pulumi/allowances";
 import {
@@ -17,18 +14,6 @@ import {
 } from "./pulumi/deliveryHandlers";
 
 const STACK = pulumi.getStack();
-
-interface NeverMissAWebhookInterface {
-    withDeliveryEndpoint(url: string): NeverMissAWebhook
-
-    withGlobalPrefix(globalPrefix: string): NeverMissAWebhook
-
-    withSQSConfigurationOverride(args: aws.sqs.QueueArgs): NeverMissAWebhook
-
-    withDirectSqsIntegration(path: string): NeverMissAWebhook
-
-    withPayloadContentSaverIntermediate(path: string): NeverMissAWebhook
-}
 
 // BucketNotification
 export class NeverMissAWebhook {
@@ -90,8 +75,6 @@ export class NeverMissAWebhook {
     private s3ProxyApiBucket: aws.s3.Bucket | null = null
 
 
-    private sqsEventHandlerDeliveryFromSavedPayload: aws.sqs.QueueEventHandler | null = null
-
     public get s3ApiUrl() {
         return this.s3ProxyApi?.url
     }
@@ -126,17 +109,24 @@ export class NeverMissAWebhook {
             instance.deliverQueuedPayload = true
         }
 
-        return instance
+        return instance as Pick<NeverMissAWebhook, "withSQSConfigurationOverride"|"withDirectSqsIntegration"|"withPayloadContentSaverIntermediate">
     }
 
     public withSQSConfigurationOverride(args: aws.sqs.QueueArgs) {
         this.queueArgs = args
-        return this;
+        return this as Pick<NeverMissAWebhook, "withDirectSqsIntegration"|"withPayloadContentSaverIntermediate">
     }
 
     public withDirectSqsIntegration() {
         // The queue which takes the payloads
-        this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, this.queueArgs)
+        let queueName = `${this.globalPrefix}-queue-${STACK}`
+        if (this.queueArgs.fifoQueue) {
+            queueName += ".fifo"
+        }
+        this.sqsDeliveryQueue = new aws.sqs.Queue(queueName, {
+            name: queueName,
+            ...this.queueArgs
+        })
 
         // Unfortunately, we have to build the queue url ourselves
         // Fortunately, this is easy
@@ -154,13 +144,25 @@ export class NeverMissAWebhook {
             lambdaSendSQSMessageRole,
             async (event: any) => {
                 const AWS = require('aws-sdk')
+                const uuid = require("uuid")
                 const sqs = new AWS.SQS()
 
                 const payloadBuffer = Buffer.from(event.body, 'base64')
                 const payload = payloadBuffer.toString('ascii')
 
+                const isFifo = String(process.env.QUEUE_URL).endsWith(".fifo")
+                const isContentBasedDeduplication = process.env.CONTENT_BASED_DEDUPLICATION === "true"
+                const messageGroupId =  isFifo ? "nmaw" : undefined
+                const messageDeduplicationId = isFifo
+                    ? isContentBasedDeduplication
+                        ? undefined
+                        : uuid.v4()
+                    : undefined
+
                 try {
                     await sqs.sendMessage({
+                        MessageGroupId: messageGroupId,
+                        MessageDeduplicationId: messageDeduplicationId,
                         MessageBody: payload,
                         QueueUrl: process.env.QUEUE_URL
                     }).promise()
@@ -178,7 +180,8 @@ export class NeverMissAWebhook {
                 }
             },
             {
-                QUEUE_URL: sqsURL
+                QUEUE_URL: sqsURL,
+                CONTENT_BASED_DEDUPLICATION: String(this.queueArgs.contentBasedDeduplication)
             }
         )
 
@@ -188,7 +191,7 @@ export class NeverMissAWebhook {
                 {
                     path: "/nmaw",
                     method: "POST",
-                    eventHandler: this.sqsProxyApiLambdaPayloadRedirector
+                    eventHandler: this.sqsProxyApiLambdaPayloadRedirector,
                 }
             ]
         })
@@ -197,10 +200,16 @@ export class NeverMissAWebhook {
             createDeliveryHandlerForDirectIntegration(this.sqsDeliveryQueue)
         }
 
-        return this
+        return this as Pick<NeverMissAWebhook, "sqsApiUrl"|"sqsQueueUrl">
+
     }
 
     public withPayloadContentSaverIntermediate() {
+
+        if (this.queueArgs.fifoQueue) {
+            throw new pulumi.ResourceError("FIFO SQS queues are not supported for Bucket notifications!", undefined)
+        }
+
         // The bucket, configured with private ACL. Only the owner can access it.
         this.s3ProxyApiBucket = new aws.s3.Bucket(`${this.globalPrefix}-payload-bucket-${STACK}`, {
             bucket: `${this.globalPrefix}-payload-bucket-${STACK}`
@@ -209,8 +218,9 @@ export class NeverMissAWebhook {
         // The queue which takes the payloads
         const queueName = `${this.globalPrefix}-queue-${STACK}`
         this.sqsDeliveryQueue = new aws.sqs.Queue(queueName, {
-            visibilityTimeoutSeconds: 180,
-            policy: allowBucketToSendSQSMessage(queueName, this.s3ProxyApiBucket.arn)
+            name: queueName,
+            policy: allowBucketToSendSQSMessage(queueName, this.s3ProxyApiBucket.arn),
+            ...this.queueArgs,
         })
 
         const roleLambdaPutS3 = allowLambdaToPutObjectsInS3Bucket(
@@ -231,15 +241,7 @@ export class NeverMissAWebhook {
                     Body: payload
                 }
 
-                await new Promise((resolve, reject) => {
-                    s3.putObject(putParams, function (err: any, data: any) {
-                        if (err) {
-                            reject(err)
-                        } else {
-                            resolve(data)
-                        }
-                    })
-                })
+                await s3.putObject(putParams).promise()
 
                 return {
                     statusCode: 200,
@@ -290,7 +292,7 @@ export class NeverMissAWebhook {
             createDeliveryHandlerForS3Intermediate(this.sqsDeliveryQueue, this.s3ProxyApiBucket)
         }
 
-        return this
+        return this as Pick<NeverMissAWebhook, "s3ApiUrl"|"sqsQueueUrl">
     }
 
 }

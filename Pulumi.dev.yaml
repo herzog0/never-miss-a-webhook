@@ -2,9 +2,7 @@ config:
   aws:accountId: "686854974865"
   aws:profile: default
   aws:region: us-east-1
-
   global:prefix: nmaw-1901
-
-  opt:deliverQueuedPayload: true
-  opt:deliveryEndpoint: "https://webhook.site/1544609f-de1d-4540-8631-06a1f10bcd83"
-  opt:deletePayloadObj: false
+  opt:deletePayloadObj: "false"
+  opt:deliverQueuedPayload: "true"
+  opt:deliveryEndpoint: https://webhook.site/1544609f-de1d-4540-8631-06a1f10bcd83

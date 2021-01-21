@@ -133,6 +133,7 @@ export function allowBucketToSendSQSMessage(name: string,
     const region = awsConfig.require("region")
     const accountId = awsConfig.require("accountId")
 
+    // todo too much queues
     return pulumi.interpolate`{
   "Version": "2012-10-17",
   "Statement": [
@@ -178,7 +179,7 @@ export function allowLambdaToPutObjectsInS3Bucket(name: string,
 `,
     })
 
-    // Create policy with logging allowance
+    // Create policy with logging allowance todo s3
     const policy = new aws.iam.Policy(`${name}-plcy`, {
         description: description,
         path: `/never-miss-a-webhook/${globalPrefix}/${stack}/`,
