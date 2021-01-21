@@ -3,7 +3,7 @@ import * as awsx from "@pulumi/awsx";
 import * as pulumi from "@pulumi/pulumi";
 import {Request, Response} from "@pulumi/awsx/apigateway/api";
 import {QueueEvent} from "@pulumi/aws/sqs";
-import {createPulumiCallback} from "./pulumi/callback";
+import {createPulumiCallback} from "./pulumi/callbacks";
 import {
     allowBucketToSendSQSMessage,
     allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket,
@@ -11,6 +11,10 @@ import {
     allowLambdaToReceiveDeleteGetSQSMessage,
     allowLambdaToSendSQSMessage
 } from "./pulumi/allowances";
+import {
+    createDeliveryHandlerForDirectIntegration,
+    createDeliveryHandlerForS3Intermediate
+} from "./pulumi/deliveryHandlers";
 
 const STACK = pulumi.getStack();
 
@@ -29,15 +33,8 @@ interface NeverMissAWebhookInterface {
 // BucketNotification
 export class NeverMissAWebhook {
 
-    private config = new pulumi.Config("aws")
     private region: string = ""
     private accountId: string = ""
-    private deletePayloadObj: boolean = false
-
-    /**
-     * The endpoint to post to
-     * */
-    private deliveryEndpoint: string = ""
 
     /**
      * The queue where requests will be posted to.
@@ -57,17 +54,16 @@ export class NeverMissAWebhook {
     private globalPrefix: string = ""
 
     /**
-     * The flag that indicates if the chosen method was direct integration
-     * or the s3 payload saving method
+     * The flag stating that a queued payload should be delivered to the the specified "deliveryEndpoint"
      * */
-    private directDelivery: boolean = true
+    private deliverQueuedPayload: boolean = false
 
     /**
      * If the chosen method is to directly post the message to SQS,
      * then the Api Gateway acts as a simple proxy, and we don't need
      * a lambda to manage the payload before the posting action.
      * */
-    public sqsProxyApi: awsx.apigateway.API | null = null
+    private sqsProxyApi: awsx.apigateway.API | null = null
 
     /**
      * The lambda function responsible for taking the request body incoming from api gateway
@@ -80,7 +76,7 @@ export class NeverMissAWebhook {
      * object and then share it's key to an SQS queue, then we need to provide
      * a simple Lambda function that fulfills our proxy needs.
      * */
-    public s3ProxyApi: awsx.apigateway.API | null = null
+    private s3ProxyApi: awsx.apigateway.API | null = null
 
     /**
      * The functions that takes the request body incoming from api gateway
@@ -93,27 +89,42 @@ export class NeverMissAWebhook {
      * */
     private s3ProxyApiBucket: aws.s3.Bucket | null = null
 
-    /**
-     * The lambda that handles SQS messages for a simple delivery attempt.
-     * */
-    private sqsEventHandlerSimpleDeliveryAttempt: aws.sqs.QueueEventHandler | null = null
 
-    /**
-     * The lambda that handles SQS messages for delivery attempts from
-     * saved payloads.
-     * */
     private sqsEventHandlerDeliveryFromSavedPayload: aws.sqs.QueueEventHandler | null = null
+
+    public get s3ApiUrl() {
+        return this.s3ProxyApi?.url
+    }
+
+    public get sqsApiUrl() {
+        return this.sqsProxyApi?.url
+    }
+
+    public get sqsQueueUrl() {
+        return this.sqsDeliveryQueue?.name.apply(name => `https://sqs.${this.region}.amazonaws.com/${this.accountId}/${name}`)
+    }
 
     private constructor() {
     }
 
     public static builder() {
         const instance = new NeverMissAWebhook()
-        instance.region = instance.config.require("region")
-        instance.accountId = instance.config.require("accountId")
-        instance.globalPrefix = instance.config.require("globalPrefix")
-        instance.deliveryEndpoint = instance.config.require("deliveryEndpoint")
-        instance.deletePayloadObj = instance.config.getBoolean("deletePayloadObj") || false
+        const awsConfig = new pulumi.Config("aws")
+        const globals = new pulumi.Config("global")
+        const optConfig = new pulumi.Config("opt")
+
+        instance.region = awsConfig.require("region")
+        instance.accountId = awsConfig.require("accountId")
+
+        instance.globalPrefix = globals.require("prefix")
+
+        if (optConfig.getBoolean("deliverQueuedPayload")) {
+            if (!optConfig.require("deliveryEndpoint")) {
+                throw new pulumi.ResourceError("If 'deliverQueuedPayload' is active, then " +
+                    "'deliveryEndpoint' must be set to a valid Url.", undefined)
+            }
+            instance.deliverQueuedPayload = true
+        }
 
         return instance
     }
@@ -123,43 +134,9 @@ export class NeverMissAWebhook {
         return this;
     }
 
-    public withDirectSqsIntegration(path: string) {
-        this.directDelivery = true
-
+    public withDirectSqsIntegration() {
         // The queue which takes the payloads
         this.sqsDeliveryQueue = new aws.sqs.Queue(`${this.globalPrefix}-queue-${STACK}`, this.queueArgs)
-
-        // Role for allowing the lambda function to call "ReceiveMessage" (internally by aws)
-        // on the queue
-        const lambdaReceiveMessageRole = allowLambdaToReceiveDeleteGetSQSMessage(
-            `${this.globalPrefix}-lam-rec-msg-allw-${STACK}`,
-            "Allows a lambda function to receive messages from an SQS queue.",
-            this.sqsDeliveryQueue.arn
-        )
-
-        // Creating the full Callback function to be attached in the queue event system
-        this.sqsEventHandlerSimpleDeliveryAttempt = createPulumiCallback(
-            `${this.globalPrefix}-simple-dlvry-cb-${STACK}`,
-            lambdaReceiveMessageRole,
-            async (event: QueueEvent) => {
-                const axios = require("axios")
-                const body = JSON.parse(event.Records[0].body)
-                await axios.post(process.env.DELIVERY_ENDPOINT, body, {
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-            },
-            {
-                DELIVERY_ENDPOINT: this.deliveryEndpoint
-            }
-        )
-
-        // Firing the above callback on queue events
-        this.sqsDeliveryQueue.onEvent(
-            `${this.globalPrefix}-queue-subscription-${STACK}`,
-            this.sqsEventHandlerSimpleDeliveryAttempt
-        )
 
         // Unfortunately, we have to build the queue url ourselves
         // Fortunately, this is easy
@@ -209,18 +186,21 @@ export class NeverMissAWebhook {
         this.sqsProxyApi = new awsx.apigateway.API(`${this.globalPrefix}-sqs-proxy-api-${STACK}`, {
             routes: [
                 {
-                    path: path,
+                    path: "/nmaw",
                     method: "POST",
                     eventHandler: this.sqsProxyApiLambdaPayloadRedirector
                 }
             ]
         })
+
+        if (this.deliverQueuedPayload) {
+            createDeliveryHandlerForDirectIntegration(this.sqsDeliveryQueue)
+        }
+
         return this
     }
 
-    public withPayloadContentSaverIntermediate(path: string) {
-        this.directDelivery = false
-
+    public withPayloadContentSaverIntermediate() {
         // The bucket, configured with private ACL. Only the owner can access it.
         this.s3ProxyApiBucket = new aws.s3.Bucket(`${this.globalPrefix}-payload-bucket-${STACK}`, {
             bucket: `${this.globalPrefix}-payload-bucket-${STACK}`
@@ -285,70 +265,11 @@ export class NeverMissAWebhook {
             }
         )
 
-        const roleLambdaSQSS3Perms = allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket(
-            `${this.globalPrefix}-lam-rec-del-sqs-get-del-s3-${STACK}`,
-            "Allows a lambda to perform operations on an SQS queue and on an S3 bucket",
-            this.deletePayloadObj,
-            this.sqsDeliveryQueue.arn,
-            this.s3ProxyApiBucket.arn
-            )
-
-        const lambdaGetAndPostPayload = async (event: any) => {
-            const axios = require("axios")
-            const AWS = require('aws-sdk')
-            const body = JSON.parse(event.Records[0].body)
-            if (body.hasOwnProperty("Event") && body.Event === "s3:TestEvent") {
-                console.log("Ignoring automatic test event from aws ...")
-                return
-            }
-
-            const S3 = new AWS.S3()
-            const bucketEvent = body.Records[0]
-            const key = bucketEvent.s3.object.key
-            const bucket = bucketEvent.s3.bucket.name
-
-            const data = await S3.getObject({
-                Bucket: bucket,
-                Key: key,
-            }).promise()
-
-            const jsonStringData = data.Body.toString('utf-8')
-            await axios.post(process.env.DELIVERY_ENDPOINT, JSON.parse(jsonStringData), {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            })
-
-            // If reached here, check if we have to delete the payload
-            const shouldDelete = process.env.DELETE_PAYLOAD_AFTER === "true"
-            if (shouldDelete) {
-                await S3.deleteObject({
-                    Bucket: bucket,
-                    Key: key
-                }).promise()
-            }
-        }
-
-        this.sqsEventHandlerDeliveryFromSavedPayload = createPulumiCallback(
-            `${this.globalPrefix}-deliver-from-s3-${STACK}`,
-            roleLambdaSQSS3Perms,
-            lambdaGetAndPostPayload,
-            {
-                DELIVERY_ENDPOINT: this.deliveryEndpoint,
-                DELETE_PAYLOAD_AFTER: String(this.deletePayloadObj)
-            }
-        )
-
-        this.sqsDeliveryQueue.onEvent(
-            `${this.globalPrefix}-queue-subscription-${STACK}`,
-            this.sqsEventHandlerDeliveryFromSavedPayload
-        )
-
         // create API
         this.s3ProxyApi = new awsx.apigateway.API(`${this.globalPrefix}-s3-proxy-api-${STACK}`, {
             routes: [
                 {
-                    path: path,
+                    path: "/nmaw",
                     method: "POST",
                     eventHandler: this.s3ProxyApiLambdaPayloadSaver
                 }
@@ -364,6 +285,10 @@ export class NeverMissAWebhook {
                 }
             ],
         })
+
+        if (this.deliverQueuedPayload) {
+            createDeliveryHandlerForS3Intermediate(this.sqsDeliveryQueue, this.s3ProxyApiBucket)
+        }
 
         return this
     }

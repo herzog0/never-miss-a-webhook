@@ -5,10 +5,11 @@ import * as pulumi from "@pulumi/pulumi";
 export function allowLambdaToReceiveDeleteGetSQSMessage(name: string,
                                                         description: string,
                                                         queueArn: Output<string>): aws.iam.Role {
-    const config = new pulumi.Config("aws")
-    const region = config.require("region")
-    const accountId = config.require("accountId")
-    const globalPrefix = config.require("globalPrefix")
+    const awsConfig = new pulumi.Config("aws")
+    const region = awsConfig.require("region")
+    const accountId = awsConfig.require("accountId")
+    const globals = new pulumi.Config("global")
+    const globalPrefix = globals.require("prefix")
     const stack = pulumi.getStack()
 
     // Create role
@@ -67,10 +68,11 @@ export function allowLambdaToReceiveDeleteGetSQSMessage(name: string,
 export function allowLambdaToSendSQSMessage(name: string,
                                             description: string,
                                             queueArn: Output<string>): aws.iam.Role {
-    const config = new pulumi.Config("aws")
-    const region = config.require("region")
-    const accountId = config.require("accountId")
-    const globalPrefix = config.require("globalPrefix")
+    const awsConfig = new pulumi.Config("aws")
+    const region = awsConfig.require("region")
+    const accountId = awsConfig.require("accountId")
+    const globals = new pulumi.Config("global")
+    const globalPrefix = globals.require("prefix")
     const stack = pulumi.getStack()
 
     // Create role
@@ -127,9 +129,9 @@ export function allowLambdaToSendSQSMessage(name: string,
 
 export function allowBucketToSendSQSMessage(name: string,
                                             bucketArn: Output<string>): Output<string> {
-    const config = new pulumi.Config("aws")
-    const region = config.require("region")
-    const accountId = config.require("accountId")
+    const awsConfig = new pulumi.Config("aws")
+    const region = awsConfig.require("region")
+    const accountId = awsConfig.require("accountId")
 
     return pulumi.interpolate`{
   "Version": "2012-10-17",
@@ -152,10 +154,11 @@ export function allowBucketToSendSQSMessage(name: string,
 export function allowLambdaToPutObjectsInS3Bucket(name: string,
                                                   description: string,
                                                   bucketArn: Output<string>): aws.iam.Role {
-    const config = new pulumi.Config("aws")
-    const region = config.require("region")
-    const accountId = config.require("accountId")
-    const globalPrefix = config.require("globalPrefix")
+    const awsConfig = new pulumi.Config("aws")
+    const region = awsConfig.require("region")
+    const accountId = awsConfig.require("accountId")
+    const globals = new pulumi.Config("global")
+    const globalPrefix = globals.require("prefix")
     const stack = pulumi.getStack()
 
     // Create role
@@ -216,10 +219,11 @@ export function allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket(name: string,
                                                                   deleteObjPerms: boolean,
                                                                   queueArn: Output<string>,
                                                                   bucketArn: Output<string>): aws.iam.Role {
-    const config = new pulumi.Config("aws")
-    const region = config.require("region")
-    const accountId = config.require("accountId")
-    const globalPrefix = config.require("globalPrefix")
+    const awsConfig = new pulumi.Config("aws")
+    const region = awsConfig.require("region")
+    const accountId = awsConfig.require("accountId")
+    const globals = new pulumi.Config("global")
+    const globalPrefix = globals.require("prefix")
     const stack = pulumi.getStack()
 
     // Create role
