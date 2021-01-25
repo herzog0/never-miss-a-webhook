@@ -32,7 +32,7 @@ export class NeverMissAWebhook {
      * The queue args that might be overwritten by the user
      * */
     private queueArgs: aws.sqs.QueueArgs = {
-        visibilityTimeoutSeconds: 180
+        visibilityTimeoutSeconds: 30
     }
 
     /**

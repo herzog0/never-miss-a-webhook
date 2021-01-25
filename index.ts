@@ -30,14 +30,13 @@ if (STACK === "dev") {
             },
             1,
             (event: any) => {
-                console.log("INSIDE DLQ")
                 console.log(process.env.DLQ_ENV_VAR)
             },
             {
-                DLQ_ENV_VAR: "uia"
+                DLQ_ENV_VAR: "INSIDE DLQ"
             })
         .withMainQueueConfigurationOverride({
-            visibilityTimeoutSeconds: 180
+            visibilityTimeoutSeconds: 30
         })
         .withPayloadContentSaverIntermediate()
 

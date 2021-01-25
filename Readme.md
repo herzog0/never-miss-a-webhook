@@ -11,7 +11,10 @@ you are ready to go.
 ## Usage
 ![](./nmaw.png)
 
+Considering the graphical explanation above, that translates into code like this:  
+```typescript
 
+```
 
 # Environment configuration
 

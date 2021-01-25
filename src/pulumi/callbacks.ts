@@ -11,6 +11,7 @@ export function createPulumiCallback(name: string,
         runtime: "nodejs12.x",
         role: role,
         callback: fn,
+        timeout: 60,
         environment: {
             variables: env
         }

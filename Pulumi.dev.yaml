@@ -5,4 +5,4 @@ config:
   global:prefix: nmaw-1901
   opt:deletePayloadObj: "false"
   opt:deliverQueuedPayload: "true"
-  opt:deliveryEndpoint: https://www.aisukdjasjlkdlasld.com
+  opt:deliveryEndpoint: https://webhook.site/1544609f-de1d-4540-8631-06a1f10bcd83
