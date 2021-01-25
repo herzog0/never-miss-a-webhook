@@ -6,15 +6,42 @@ const STACK = pulumi.getStack()
 export let ApiUrl: pulumi.Output<string> | undefined;
 export let QueueUrl: pulumi.Output<string> | undefined;
 
+/*
+*
+* redrive_policy = {
+    'deadLetterTargetArn': dead_letter_queue_arn,
+    'maxReceiveCount': '10'
+}
+
+
+# Configure queue to send messages to dead letter queue
+sqs.set_queue_attributes(
+    QueueUrl=queue_url,
+    Attributes={
+        'RedrivePolicy': json.dumps(redrive_policy)
+    }
+)
+* */
+
 if (STACK === "dev") {
     const nmaw = NeverMissAWebhook.builder()
-        .withSQSConfigurationOverride({
-            visibilityTimeoutSeconds: 180,
-            receiveWaitTimeSeconds: 5,
+        .withDeadLetterQueue({
+                visibilityTimeoutSeconds: 180
+            },
+            1,
+            (event: any) => {
+                console.log("INSIDE DLQ")
+                console.log(process.env.DLQ_ENV_VAR)
+            },
+            {
+                DLQ_ENV_VAR: "uia"
+            })
+        .withMainQueueConfigurationOverride({
+            visibilityTimeoutSeconds: 180
         })
-        .withDirectSqsIntegration()
+        .withPayloadContentSaverIntermediate()
 
-    ApiUrl = nmaw.sqsApiUrl
+    ApiUrl = nmaw.s3ApiUrl
     QueueUrl = nmaw.sqsQueueUrl
 
 } else {

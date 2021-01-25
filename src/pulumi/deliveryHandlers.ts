@@ -3,6 +3,7 @@ import {allowLambdaReceiveDeleteGetSQSMsgGetObjInS3Bucket, allowLambdaToReceiveD
 import {createPulumiCallback} from "./callbacks";
 import {QueueEvent} from "@pulumi/aws/sqs";
 import * as aws from "@pulumi/aws"
+import {Input} from "@pulumi/pulumi";
 
 export function createDeliveryHandlerForDirectIntegration(queue: aws.sqs.Queue) {
     const STACK = pulumi.getStack();
@@ -26,11 +27,25 @@ export function createDeliveryHandlerForDirectIntegration(queue: aws.sqs.Queue) 
         async (event: QueueEvent) => {
             const axios = require("axios")
             const body = JSON.parse(event.Records[0].body)
-            await axios.post(process.env.DELIVERY_ENDPOINT, body, {
+            const res = await axios.post(process.env.DELIVERY_ENDPOINT, body, {
                 headers: {
                     'Content-Type': 'application/json'
                 }
             })
+
+            // HTTP status code 429: Too Many Requests
+            // For these status codes we assume that there
+            // was a problem in the communication between the lambda
+            // and the requested server that might be solved automatically.
+            // For example, if the server is down but is coming back up in
+            // a few moments.
+            // Throwing an exception makes the message get back in the queue,
+            // otherwise, sqs assumes the message has been successfully
+            // processed and deletes it.
+            if (res.status === 429 || res.status >= 500) {
+                throw new Error(res.statusText)
+            }
+
         },
         {
             DELIVERY_ENDPOINT: deliveryEndpoint
@@ -86,11 +101,24 @@ export function createDeliveryHandlerForS3Intermediate(queue: aws.sqs.Queue, buc
         }).promise()
 
         const jsonStringData = data.Body.toString('utf-8')
-        await axios.post(process.env.DELIVERY_ENDPOINT, JSON.parse(jsonStringData), {
+        const res = await axios.post(process.env.DELIVERY_ENDPOINT, JSON.parse(jsonStringData), {
             headers: {
                 'Content-Type': 'application/json'
             }
         })
+
+        // HTTP status code 429: Too Many Requests
+        // For these status codes we assume that there
+        // was a problem in the communication between the lambda
+        // and the requested server that might be solved automatically.
+        // For example, if the server is down but is coming back up in
+        // a few moments.
+        // Throwing an exception makes the message get back in the queue,
+        // otherwise, sqs assumes the message has been successfully
+        // processed and deletes it.
+        if (res.status === 429 || res.status >= 500) {
+            throw new Error(res.statusText)
+        }
 
         // If reached here, check if we have to delete the payload
         const shouldDelete = process.env.DELETE_PAYLOAD_AFTER === "true"
@@ -115,5 +143,34 @@ export function createDeliveryHandlerForS3Intermediate(queue: aws.sqs.Queue, buc
     queue.onEvent(
         `${prefix}-queue-subscription-${STACK}`,
         sqsEventHandlerDeliveryFromSavedPayload
+    )
+}
+
+
+export function createHandlerForDLQ(queue: aws.sqs.Queue, lambdaFunction: (event: any) => void, lambdaEnvVars: Input<{[key: string]: Input<string>}> = {}) {
+    const STACK = pulumi.getStack();
+    const config = new pulumi.Config("global")
+    const prefix = config.require("prefix")
+
+    // Role for allowing the lambda function to call "ReceiveMessage" (internally by aws)
+    // on the queue
+    const lambdaReceiveMessageRole = allowLambdaToReceiveDeleteGetSQSMessage(
+        `${prefix}-dlq-lam-rec-msg-allw-${STACK}`,
+        "Allows a lambda function to receive messages from an SQS queue.",
+        queue.arn
+    )
+
+    // Creating the full Callback function to be attached in the queue event system
+    const sqsDLQHandler = createPulumiCallback(
+        `${prefix}-dlq-cb-${STACK}`,
+        lambdaReceiveMessageRole,
+        lambdaFunction,
+        lambdaEnvVars
+    )
+
+    // Firing the above callback on queue events
+    queue.onEvent(
+        `${prefix}-dlq-subscription-${STACK}`,
+        sqsDLQHandler
     )
 }

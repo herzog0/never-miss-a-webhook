@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
 import * as pulumi from "@pulumi/pulumi";
+import {Input, ResourceError} from "@pulumi/pulumi";
 import {Request, Response} from "@pulumi/awsx/apigateway/api";
 import {createPulumiCallback} from "./pulumi/callbacks";
 import {
@@ -10,7 +11,8 @@ import {
 } from "./pulumi/allowances";
 import {
     createDeliveryHandlerForDirectIntegration,
-    createDeliveryHandlerForS3Intermediate
+    createDeliveryHandlerForS3Intermediate,
+    createHandlerForDLQ
 } from "./pulumi/deliveryHandlers";
 
 const STACK = pulumi.getStack();
@@ -32,6 +34,17 @@ export class NeverMissAWebhook {
     private queueArgs: aws.sqs.QueueArgs = {
         visibilityTimeoutSeconds: 180
     }
+
+    /**
+     * The Dead Letter Queue of the main queue
+     * */
+    private sqsDLQ: aws.sqs.Queue | null = null
+
+    /**
+     * The maximum amount of times the main queue will receive a message
+     * before forwarding it to the DLQ
+     * */
+    private maxReceiveCount: number | null = null
 
     /**
      * The prefix that's going to be attached to every single service
@@ -109,10 +122,35 @@ export class NeverMissAWebhook {
             instance.deliverQueuedPayload = true
         }
 
-        return instance as Pick<NeverMissAWebhook, "withSQSConfigurationOverride"|"withDirectSqsIntegration"|"withPayloadContentSaverIntermediate">
+        return instance as Pick<NeverMissAWebhook, "withDeadLetterQueue"|"withoutDeadLetterQueue">
     }
 
-    public withSQSConfigurationOverride(args: aws.sqs.QueueArgs) {
+    public withDeadLetterQueue(args: aws.sqs.QueueArgs, maxReceiveCount: number,
+                               lambdaFunction?: (event: any) => void,
+                               lambdaEnvVars: Input<{[key: string]: Input<string>}> = {}) {
+        const isInt = parseInt(String(maxReceiveCount)) === parseFloat(String(maxReceiveCount))
+        if (!isInt) {
+            throw new ResourceError(`maxReceiveCount is: ${maxReceiveCount} but it should be an integer number`, undefined)
+        }
+
+        this.maxReceiveCount = maxReceiveCount
+
+        this.sqsDLQ = new aws.sqs.Queue(`${this.globalPrefix}-dlq-${STACK}`, args)
+        if (lambdaFunction) {
+            createHandlerForDLQ(this.sqsDLQ, lambdaFunction, lambdaEnvVars)
+        }
+        return this as Pick<NeverMissAWebhook, "withMainQueueConfigurationOverride"|"withoutSQSConfigurationOverride">
+    }
+
+    public withoutDeadLetterQueue() {
+        return this as Pick<NeverMissAWebhook, "withMainQueueConfigurationOverride"|"withoutSQSConfigurationOverride">
+    }
+
+    public withoutSQSConfigurationOverride() {
+        return this as Pick<NeverMissAWebhook, "withDirectSqsIntegration"|"withPayloadContentSaverIntermediate">
+    }
+
+    public withMainQueueConfigurationOverride(args: aws.sqs.QueueArgs) {
         this.queueArgs = args
         return this as Pick<NeverMissAWebhook, "withDirectSqsIntegration"|"withPayloadContentSaverIntermediate">
     }
@@ -123,10 +161,27 @@ export class NeverMissAWebhook {
         if (this.queueArgs.fifoQueue) {
             queueName += ".fifo"
         }
-        this.sqsDeliveryQueue = new aws.sqs.Queue(queueName, {
-            name: queueName,
-            ...this.queueArgs
-        })
+
+        if (this.sqsDLQ) {
+            const redrivePolicy = this.sqsDLQ.arn.apply(arn => {
+                return JSON.stringify({
+                    deadLetterTargetArn: arn,
+                    maxReceiveCount: this.maxReceiveCount
+                })
+            })
+            this.queueArgs = {
+                name: queueName,
+                redrivePolicy: redrivePolicy,
+                ...this.queueArgs
+            }
+        } else {
+            this.queueArgs = {
+                name: queueName,
+                ...this.queueArgs
+            }
+        }
+
+        this.sqsDeliveryQueue = new aws.sqs.Queue(queueName, this.queueArgs)
 
         // Unfortunately, we have to build the queue url ourselves
         // Fortunately, this is easy
@@ -189,7 +244,7 @@ export class NeverMissAWebhook {
         this.sqsProxyApi = new awsx.apigateway.API(`${this.globalPrefix}-sqs-proxy-api-${STACK}`, {
             routes: [
                 {
-                    path: "/nmaw",
+                    path: "/",
                     method: "POST",
                     eventHandler: this.sqsProxyApiLambdaPayloadRedirector,
                 }
@@ -204,6 +259,8 @@ export class NeverMissAWebhook {
 
     }
 
+    // public withOptional
+
     public withPayloadContentSaverIntermediate() {
 
         if (this.queueArgs.fifoQueue) {
@@ -217,6 +274,20 @@ export class NeverMissAWebhook {
 
         // The queue which takes the payloads
         const queueName = `${this.globalPrefix}-queue-${STACK}`
+
+        if (this.sqsDLQ) {
+            const redrivePolicy = this.sqsDLQ.arn.apply(arn => {
+                return JSON.stringify({
+                    deadLetterTargetArn: arn,
+                    maxReceiveCount: this.maxReceiveCount
+                })
+            })
+            this.queueArgs = {
+                redrivePolicy: redrivePolicy,
+                ...this.queueArgs
+            }
+        }
+
         this.sqsDeliveryQueue = new aws.sqs.Queue(queueName, {
             name: queueName,
             policy: allowBucketToSendSQSMessage(queueName, this.s3ProxyApiBucket.arn),
@@ -271,7 +342,7 @@ export class NeverMissAWebhook {
         this.s3ProxyApi = new awsx.apigateway.API(`${this.globalPrefix}-s3-proxy-api-${STACK}`, {
             routes: [
                 {
-                    path: "/nmaw",
+                    path: "/",
                     method: "POST",
                     eventHandler: this.s3ProxyApiLambdaPayloadSaver
                 }
