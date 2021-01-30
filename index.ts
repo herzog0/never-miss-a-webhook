@@ -22,7 +22,7 @@ sqs.set_queue_attributes(
     }
 )
 * */
-
+// TODO adicionar autorização no header
 if (STACK === "dev") {
     const nmaw = NeverMissAWebhook.builder()
         .withDeadLetterQueue({

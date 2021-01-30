@@ -3,7 +3,7 @@
 Never Miss A Webhook is a Pulumi program aimed at removing the burden of configuring a cloud structure in aws 
 responsible for taking care of the notifications you don't want to lose.  
 With Pulumi the burden is even lower than most of other implementations (like configuring everything by hand or by 
-a complicated aws-exclusive language) because you can code the cloud infrastructure in many actual programming 
+a complicated d language) because you can code the cloud infrastructure in many actual programming 
 languages.  
 In our case, this project is fully written in Typescript so, if there's anything you want to change or customise in it,
 you are ready to go.  

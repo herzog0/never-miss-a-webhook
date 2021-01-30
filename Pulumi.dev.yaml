@@ -2,6 +2,8 @@ config:
   aws:accountId: "686854974865"
   aws:profile: default
   aws:region: us-east-1
+  global:dbPassword:
+    secure: AAABAOMDjwv98b2qHObaHT6yUs8aehFb3zOebK7+JspN6iS4EYtd
   global:prefix: nmaw-1901
   opt:deletePayloadObj: "false"
   opt:deliverQueuedPayload: "true"
